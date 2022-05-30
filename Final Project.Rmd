@@ -1,0 +1,159 @@
+---
+title: "Final Project"
+author: "Hunter Schuller"
+date: "4/29/2022"
+output:
+    prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+---
+
+### Introduction
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r warning = FALSE, message = FALSE, cache = FALSE}
+library(ggplot2)
+library(tidyverse)
+library(gapminder)
+library(countrycode)
+library(purrr)
+library(ggrepel)
+athlete_events <- read_csv(file = 'athlete_events.csv', 
+   col_types = cols(ID = 'i', Age = 'i', Height = 'i', Year = 'i'))
+noc_regions <- read_csv('noc_regions.csv')
+noc_regions$NOC <- noc_regions$NOC %>% countrycode(origin = "ioc", destination = "iso3c")
+noc_regions$Index <- 1:230
+noc_regions <- noc_regions %>% 
+  filter(!is.na(NOC))
+socio_eco_one <- gapminder_unfiltered 
+socio_eco_five <- gapminder
+host_cities <- read_csv("host_cities.csv")
+```
+
+I have loaded in the standard `ggplot` and `tidyverse` for data manipulation and graphing. The libraries `gapminder` and `countrycode` are used for data purposes. I imported the CVSs `athlete_events` and `noc_regions` whilst cleaning up the columns and country code formatting. I renamed the two data frames we use from `gapminder` with more readable names. Finally, I imported the `host_cities` data set. 
+
+### Question 1
+
+## Is there a relationship between GDP and number of medals?
+
+```{r}
+socio_eco_one <- socio_eco_one %>% 
+  filter(year %in% c(seq(1952,2004, by=4))) %>% 
+  left_join(noc_regions, by = c("country" = "region"))
+getGDP <- function(x, y){
+  vec <- filter(socio_eco_one, NOC == x, year == y)
+  return(vec$gdpPercap)
+}
+
+
+gdpMedals <- athlete_events %>% 
+  group_by(NOC, Year) %>% 
+  summarise(Medals = sum(!is.na(Medal))) %>% 
+  filter(Year > 1951)
+gdpMedals$GDP <- rep(0, 2896)
+for(i in 1:nrow(gdpMedals)) {
+  x <- getGDP(gdpMedals$NOC[i], gdpMedals$Year[i])
+  if(length(x) == 0){
+    gdpMedals$GDP[i] <- -1
+  }else{
+    gdpMedals$GDP[i] <- x
+  }
+}
+gdpMedals <- gdpMedals %>% 
+  filter(GDP > 0) %>% 
+  mutate(GDPLevel = ifelse(GDP < 10000, "Lower", ifelse(GDP < 20000, "Middle", "Higher")), 
+         MedalsLevel = ifelse(Medals < 15, "Lower", ifelse(Medals < 35, "Middle", "Higher")))
+
+
+ggplot(gdpMedals) +
+  geom_point(aes(x = GDP, y = Medals, color = NOC)) +
+  theme(legend.position = "none") +
+  xlim(0, 25000) +
+  ylim(0, 110) +
+  ggtitle("GDP vs. Medals in each Country and Year")
+ggplot(gdpMedals) +
+  geom_density(aes(x = Medals, color = GDPLevel)) +
+  xlim(0, 100) +
+  ggtitle("Density of Medals by GDP Level")
+ggplot(gdpMedals) +
+  geom_density(aes(x = GDP, color = MedalsLevel)) +
+  ggtitle("Density of GDP by Medals Level")
+
+```
+
+|   For the code portion of this question, there was much to be used from the modules. The first step was to `left_join` the `socio_eco_one` with `noc_regions` to have the NOC with the country's GDP for each year. This process was covered in Module 7 about joins and combining data frames. Next, I used dplyr functions covered in Module 4 to summarize the number of medals from each year and NOC. I added the factor variables for GDP and Medals as Lower, Middle, and Higher. With the data all set, I plotted GDP versus Medals, and then the density of Medals by GDP level and GDP by Medal Levels. 
+|   The scatter plot shows GDP versus Medals for all of the available data points. We can makes some conclusions from this graph. First, just because a country has a high GDP, doesn't mean they are guaranteed a medal. Second, the countries with lots of medals tend to be in the middle of the pack in terms of GDP. Lastly, most low GDP countries don't earn any medals. 
+|   For the density plots, it confirms our analysis that low GDP countries don't get any medals. Also, we can say countries who get tons of medals are almost equally distributed as the medal counts reach 75 or more. The next plot confirms that there is a large density of the Higher Medal factor in the median range of GDP.
+|   As for the question, we can see that there is some relationship between GDP and medals earned at the Olympics. Low GDP countries tend to not earn any medals. Middle and High GDP countries tend to be distributed between no medals and the highest amount. 
+
+
+
+### Question 2
+
+## Is there a host country effect on the number of medals? In other words, do countries earn more medals when they host an Olympic games?
+
+
+```{r}
+getNOC <- function(country){
+  row <- filter(noc_regions, region == country)
+  return(ifelse(length(row$NOC) == 0, "NULL", row$NOC))
+}
+hostCity <- athlete_events %>% 
+  left_join(host_cities, by = c("City" = "city")) %>% 
+  mutate(hostNOC = "NULL") %>% 
+  select(country, hostNOC, Medal, NOC) %>% 
+  group_by(country, hostNOC, NOC) %>% 
+  summarize(Medals = sum(!is.na(Medal)))
+for(i in 1:nrow(hostCity)){
+  hostCity$hostNOC[i] <- getNOC(hostCity$country[i])
+}
+hostNOCList <- unique(hostCity$hostNOC)
+hostCity <- hostCity %>%
+  filter(hostNOC != "NULL", NOC %in% hostNOCList)
+hostCityMedals <- subset(hostCity, NOC == hostNOC)
+
+ggplot() +
+  geom_point(data = hostCity, aes(x = as.factor(NOC), y = Medals)) + 
+  geom_point(data = hostCityMedals, aes(x = as.factor(NOC), y = Medals, color = "red")) +
+  xlab("Host Cities as their NOC")
+
+hostCity %>% 
+  group_by(NOC) %>% 
+  summarise(totalMedals = sum(Medals)) %>% 
+  right_join(hostCityMedals, by = c("NOC" = "NOC")) %>% 
+  summarise(pctMedalsAsHost = Medals/totalMedals, NOC) %>% 
+  ggplot() +
+  geom_point(aes(x = NOC, y = pctMedalsAsHost)) 
+```
+
+|   The code for this question included similar ideas from the last question. I used the join functions from Module 7 and multiple `dplyr` verbs from Module 4 to create a data set of host cities and how many medals each country got at that host city. I had to filter out null values which made my data set about 286 rows of data. 
+|   Looking at the first scatter plot, the x-axis is each host city and the y-axis is the number of medals for each of their Olympics. The red dot indicates the years in which the country was the host. We can see that almost half of the countries have their highest medal total when they are the host. Outside of those, the medals for the host country are within the top performances of their country. 
+|   The next scatter plot compares the percentage of their total medal count to the amount gained when they were the host city. We can see the outlier of Belgium, which they have earned 46% of their total medal count whenever they were the host. The other countries' years where they were the host make up to 10-25% of their total medals. 
+|   With all of this in mind, we can conclude there is a host city effect on the number of medals. For some countries, their best performances were when they were the host. Comparing to the total amount of medals earned, a large proportion come from their hosting year. 
+
+### Question 3
+
+## Is there a relationship between age and number of gold, silver, and bronze medals?
+
+```{r}
+age <- athlete_events %>%  
+  select(Age, Medal) %>% 
+  filter(!is.na(Age) & !is.na(Medal))%>% 
+  group_by(Medal, Age) %>% 
+  summarise(numMedals = n())
+ggplot(data = age) +
+  geom_point(aes(x = Age, y = numMedals)) +
+  facet_wrap(vars(Medal))
+```
+
+|   The code uses dplyr verbs, ggplot, and faceting. I filtered and grouped the `athlete_events` data set for each medal type and age. With this filter, I can create a scatter plot that is faceted for each type of medal. 
+|   Although the graphs look fairly similar, there are significant differences. The oldest gold medal winner is barely over 60, while the oldest bronze and silver medal winners are over 70. The peak of gold medals is slightly thinner than other medals, meaning there is a smaller range to earn gold medals. 
+|   To answer the question, there is a relationship between age and number of gold, silver, and bronze medals. The peak age of earning medals is between 20 and 30. As people get older, their chances of earning a medal significantly decreases. As people get over 60 years old, their chances of getting a gold medal decrease, while it is still viable to get a silver or bronze medal. 
+
+
+
+
+
